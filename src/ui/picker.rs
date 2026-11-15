@@ -64,6 +64,70 @@ pub fn release_gif_animations(app: &App, ctx: &egui::Context) {
     }
 }
 
+pub fn show_docked(
+        app: &mut App,
+        ui: &mut egui::Ui,
+        width: f32,
+        tab: PickerTab,
+    ) {
+
+    let palette = app.palette;
+    let locale = app.locale;
+
+    let title = match tab {
+        PickerTab::Emoji => gettext(locale, "Emoji"),
+        PickerTab::Gifs => gettext(locale, "GIF"),
+        PickerTab::Stickers => gettext(locale, "Stickers"),
+    };
+
+    egui::Panel::right("sticker-picker")
+        .resizable(false)
+        .exact_size(width)
+        .show_separator_line(false)
+        .frame(
+            Frame::new()
+                .fill(palette.overlay)
+                .stroke(Stroke::new(1.0, palette.outline))
+                .inner_margin(Margin::same(10)),
+        )
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 6.0;
+
+            ui.horizontal(|ui| {
+                ui.label(title.as_ref());
+
+                ui.with_layout(
+                    Layout::right_to_left(Align::Center),
+                    |ui| {
+                        if ui.button("×").clicked() {
+                            app.actions.push(Action::ClosePicker);
+                        }
+                    },
+                );
+            });
+
+            ui.separator();
+
+            let body_height = (ui.available_height() - 44.0).max(0.0);
+
+            ui.allocate_ui_with_layout(
+                vec2(ui.available_width(), body_height),
+                Layout::top_down(Align::Min),
+                |ui| match tab {
+                    PickerTab::Emoji => emoji_tab(app, ui, &palette),
+                    PickerTab::Gifs => gif_tab(app, ui, &palette),
+                    PickerTab::Stickers => sticker_tab(app, ui, &palette),
+                },
+            );
+
+            ui.with_layout(
+                Layout::bottom_up(Align::Min),
+                |ui| tabs(app, ui, &palette, tab),
+            );
+        });
+}
+
+
 pub fn show(app: &mut App, ctx: &egui::Context) {
     if app.picker == Some(PickerTab::Emoji) && app.reaction_target.is_none() {
         if app.picker_recent.is_none() {
@@ -74,6 +138,10 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
     }
     if app.reaction_target.is_some() {
         reaction_picker(app, ctx);
+        return;
+    }
+        // All picker tabs use the docked panel on desktop.
+    if app.picker.is_some() && !super::narrow(ctx) {
         return;
     }
     let Some(tab) = app.picker else {

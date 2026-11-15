@@ -36,6 +36,28 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     // Separate the panel from the conversation, as the header's line does.
     widgets::paint_edge_beside(ui, &palette, response.response.rect);
 }
+pub fn show_transition(app: &mut App, ui: &mut egui::Ui, width: f32) {
+    search_keyboard(app, ui);
+
+    let palette = app.palette;
+
+    let panel = egui::Panel::left("chats")
+        .resizable(false)
+        .exact_size(width)
+        .show_separator_line(false)
+        .frame(
+            Frame::new()
+                .fill(palette.sidebar())
+                .inner_margin(Margin::ZERO),
+        );
+
+    let response = panel.show(ui, |ui| {
+        header(app, ui);
+        body(app, ui);
+    });
+
+    widgets::paint_edge_beside(ui, &palette, response.response.rect);
+}
 
 /// The chat list across the whole window, when the window is too narrow to
 /// hold it beside a conversation. Opening a chat replaces it.

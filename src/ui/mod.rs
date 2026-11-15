@@ -38,6 +38,7 @@ use crate::app::App;
 use crate::backend::LinkStatus;
 use crate::model::{Action, Page, SidebarDisplayMode, ToastKind};
 use crate::theme::{self, Icon};
+use crate::model::PickerTab;
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let ctx = ui.ctx().clone();
@@ -149,50 +150,116 @@ fn announce(app: &mut App, ctx: &egui::Context) {
 
 /// The chat list, or the open chat or page with the list beside it unless
 /// the window is narrow.
+
 fn main_view(app: &mut App, ui: &mut egui::Ui, list_only: bool) {
     if list_only {
         chats::full_show(app, ui);
         return;
     }
-    // A narrow window gives the open chat or page all of its width; the
-    // conversation header's Back returns to the list, and the rail beside
-    // it. The info panel takes a column of its own, and when the list leaves
-    // too little room for it and the conversation, the list and the rail
-    // step aside while the panel is open. The Calls tab's history needs the
-    // full list pane: only the chats collapse into the rail's avatars.
-    let full_list = app.sidebar_mode() == SidebarDisplayMode::Expanded || app.page == Page::Calls;
-    let mut list_width = chats::compact_width(ui.ctx());
-    if full_list {
-        list_width += app.settings.sidebar_width;
+
+    let is_narrow = narrow(ui.ctx());
+
+    let picker_docked = app.picker.is_some()
+        && app.reaction_target.is_none()
+        && !is_narrow;
+
+    // Animate the complete layout transition.
+    let picker_progress = ui.ctx().animate_bool_with_time_and_easing(
+        egui::Id::new("docked-picker-transition"),
+        picker_docked,
+        0.28,
+        egui::emath::easing::quadratic_out,
+    );
+
+    // Narrow layouts continue using the original popup.
+    let layout_progress = if is_narrow {
+        0.0
+    } else {
+        picker_progress
+    };
+
+    // Remember the last tab so the panel survives its closing animation.
+    let last_tab_id = egui::Id::new("docked-picker-last-tab");
+
+    if picker_docked {
+        if let Some(tab) = app.picker {
+            ui.ctx()
+            .   data_mut(|data| data.insert_temp(last_tab_id, tab));
+        }
     }
+
+    let dock_tab = ui.ctx()
+        .data(|data| data.get_temp::<PickerTab>(last_tab_id));
+
+    let full_list =
+        app.sidebar_mode() == SidebarDisplayMode::Expanded
+            || app.page == Page::Calls;
+
+    // Animate the chat list from its normal width down to zero.
+    let list_panel_width =
+        app.settings.sidebar_width * (1.0 - layout_progress);
+
+    let show_full_list = full_list && list_panel_width > 1.0;
+
+    let mut list_width = chats::compact_width(ui.ctx());
+
+    if show_full_list {
+        list_width += list_panel_width;
+    }
+
+    // Animate the right-hand picker from zero to 340 points.
+    let dock_width = 340.0 * layout_progress;
+
     let crowded = app.info_visible()
-        && ui.available_width() - list_width < pane::INFO_MIN + pane::INFO_CONVERSATION_MIN;
+        && ui.available_width() - list_width - dock_width
+            < pane::INFO_MIN + pane::INFO_CONVERSATION_MIN;
     if macos_title_strip(app, ui.ctx()) {
         title_strip(app, ui);
     }
-    if !narrow(ui.ctx()) && !crowded {
-        rail::show(app, ui, !full_list);
-        if full_list {
-            chats::show(app, ui);
+
+    if !is_narrow && !crowded {
+        rail::show(app, ui, !show_full_list);
+
+        if show_full_list {
+            if layout_progress > 0.001 {
+                chats::show_transition(app, ui, list_panel_width);
+            } else {
+                chats::show(app, ui);
+            }
         }
     }
+
     let search_overlay = pane::show(app, ui);
     let info_overlay = info::show(app, ui);
+
+    // Draw the sticker panel before the central conversation panel.
+    if dock_width > 1.0
+        && !is_narrow
+        && app.reaction_target.is_none()
+    {
+        if let Some(tab) = dock_tab {
+            picker::show_docked(app, ui, dock_width, tab);
+        }
+    }
+
     egui::CentralPanel::default()
         .frame(central_frame(app))
         .show(ui, |ui| {
-            // The top of every page drags the window, beneath its own
-            // widgets: the empty pane, Settings, and the Calls tab's start.
             let top = ui.max_rect();
             caption_drag(
                 ui,
-                egui::Rect::from_min_size(top.min, vec2(top.width(), theme::TOP_BAR_HEIGHT)),
+                egui::Rect::from_min_size(
+                    top.min,
+                    vec2(top.width(), theme::TOP_BAR_HEIGHT),
+                ),
             );
+
             match app.page {
                 Page::Settings => settings::show(app, ui),
                 Page::Chats => conversation::show(app, ui),
-                // The open chat stays beside the call history.
-                Page::Calls if app.current_chat().is_some() => conversation::show(app, ui),
+                Page::Calls if app.current_chat().is_some() => {
+                    conversation::show(app, ui)
+                }
                 Page::Calls => {
                     banner(app, ui);
                     calls::show(app, ui);
@@ -200,13 +267,16 @@ fn main_view(app: &mut App, ui: &mut egui::Ui, list_only: bool) {
                 Page::Wallpaper => settings::wallpaper_show(app, ui),
             }
         });
+
     if let Some(region) = search_overlay {
         pane::show_overlay(app, ui.ctx(), region);
     }
+
     if let Some(region) = info_overlay {
         info::show_overlay(app, ui.ctx(), region);
     }
 }
+
 
 /// What a narrow window shows: the chat list, or what was opened from it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
